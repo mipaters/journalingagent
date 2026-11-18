@@ -189,6 +189,8 @@ function addAudit(journal, label, actor) {
 
 function doAction(action, id = state.activeJournal, metric) {
   if (action === "run-demo-step") { runDemoStep(); return; }
+  if (action === "demo-next") { selectDemoStep(Math.min(6, state.walkthroughTile + 1)); return; }
+  if (action === "demo-back") { selectDemoStep(Math.max(1, state.walkthroughTile - 1)); return; }
   if (action === "metric") {
     if (metric === "Approval backlog") setPage("approvals");
     else { state.filter = "All journals"; setPage("processing"); }
@@ -242,7 +244,10 @@ function doAction(action, id = state.activeJournal, metric) {
 }
 
 function openWalkthrough() {
-  state.walkthroughTile = 0;
+  state.walkthroughTile = 1;
+  state.walkthroughResults = [];
+  state.walkthroughCorrected = false;
+  state.walkthroughPosted = false;
   renderWalkthrough();
 }
 
@@ -257,22 +262,68 @@ const walkthrough = [
 
 function renderWalkthrough() {
   const root = document.getElementById("overlay-root");
-  root.innerHTML = `<div class="overlay centered" id="walkthrough-overlay"><section class="walkthrough-modal" role="dialog" aria-modal="true" aria-label="Executive Demo Walkthrough"><header class="walkthrough-header"><div><div class="eyebrow">JOURNAL ENTRY OPERATIONS AGENT</div><h2>Executive Demo Walkthrough</h2><p>Follow one journal from an unstructured request to a controlled ERP posting.</p></div><button class="close-button" data-action="close-overlay" aria-label="Close walkthrough">×</button></header><div class="walkthrough-content"><div class="walkthrough-grid">${walkthrough.map((tile, index) => `<button class="walk-tile ${state.walkthroughTile === index + 1 ? "selected" : ""}" data-tile="${index + 1}"><span class="walk-num">0${index + 1} / 06</span><span class="walk-icon">${tile.icon}</span><h3>${tile.title}</h3><p>${tile.summary}</p><span class="walk-more">${tile.detail}${index === 5 ? `<div class="impact-comparison"><div class="impact-compare-group"><strong>PROCESSING TIME</strong><div class="impact-bars"><div class="impact-bar before" style="width:100%">Before · 20h</div><div class="impact-bar after" style="width:20%">With AI · 4h</div></div></div><div class="impact-compare-group"><strong>MANUAL EFFORT</strong><div class="impact-bars"><div class="impact-bar before" style="width:100%">Before · 100%</div><div class="impact-bar after" style="width:40%">With AI · 40%</div></div></div></div>` : ""}</span></button>`).join("")}</div><div class="walk-bottom"><span>Click a tile to explore each stage of the journey.</span><button class="btn btn-primary" data-action="run-demo-step">${walkthrough[state.walkthroughTile ? state.walkthroughTile - 1 : 0].action} →</button></div></div></section></div>`;
+  const step = state.walkthroughTile;
+  const tile = walkthrough[step - 1];
+  const complete = state.walkthroughResults.includes(step);
+  root.innerHTML = `<div class="overlay centered" id="walkthrough-overlay">
+    <section class="walkthrough-modal" role="dialog" aria-modal="true" aria-labelledby="walkthrough-title">
+      <header class="walkthrough-header"><div><div class="eyebrow">JOURNAL ENTRY OPERATIONS AGENT</div><h2 id="walkthrough-title">Executive Demo Walkthrough</h2><p>Follow one journal from request to posting. Interactive simulation · no live journals are changed.</p></div><button class="close-button" data-action="close-overlay" aria-label="Close walkthrough">×</button></header>
+      <div class="walkthrough-content">
+        <div class="walkthrough-grid" aria-label="Walkthrough steps">${walkthrough.map((item, index) => `<button type="button" class="walk-tile ${step === index + 1 ? "selected" : ""}" data-tile="${index + 1}" aria-pressed="${step === index + 1}" aria-controls="walkthrough-detail"><span class="walk-num">0${index + 1} / 06 ${state.walkthroughResults.includes(index + 1) ? "· ✓" : ""}</span><span class="walk-icon" aria-hidden="true">${item.icon}</span><h3>${item.title}</h3><p>${item.summary}</p></button>`).join("")}</div>
+        <section class="walkthrough-detail" id="walkthrough-detail" aria-labelledby="walkthrough-step-title">
+          <div class="eyebrow">STEP ${step} OF 6 ${complete ? "· DEMONSTRATED" : ""}</div>
+          <h3 id="walkthrough-step-title">${tile.title}</h3><p>${tile.detail}</p>
+          ${walkthroughExample(step)}
+          ${complete ? `<p class="demo-result" role="status">✓ ${escapeHtml(demoResultMessage(step))}</p>` : ""}
+          <button type="button" class="btn btn-primary" data-action="run-demo-step" ${complete ? "disabled" : ""}>${complete ? "Step demonstrated" : tile.action}</button>
+        </section>
+        <div class="walk-bottom"><button type="button" class="btn" data-action="demo-back" ${step === 1 ? "disabled" : ""}>← Back</button><span>Step ${step} of 6 · Select any tile to explore</span><button type="button" class="btn btn-soft" data-action="${step === 6 ? "close-overlay" : "demo-next"}">${step === 6 ? "Finish walkthrough" : "Next step →"}</button></div>
+      </div>
+    </section>
+  </div>`;
+}
+
+function walkthroughExample(step) {
+  const demonstrated = state.walkthroughResults.includes(step);
+  const fields = (items) => `<dl class="demo-fields">${items.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl>`;
+  if (step === 1) return fields([["Intake", "Thousands of email, spreadsheet, and ticket requests"], ["Manual effort", "Repeated extraction, coding, and reconciliation"], ["Close delays", "Approval bottlenecks near month-end"], ["Control risks", "Missing evidence and limited audit visibility"]]);
+  if (step === 2) return `<div class="demo-source">XLSX · telecom_accrual_sep.xlsx → Structured journal proposal</div>${fields([["Journal type", "Telecom expense accrual"], ["Entity", "Northstar US"], ["Amount", "$24,850"], ["Accounting period", "September 2025"], ["Extraction confidence", "94%"], ["Missing information", "Cost center not supplied"]])}`;
+  if (step === 3) return `<div class="demo-check error"><strong>Error · Unsupported account code</strong><span>64290 is not a valid account for North America telecom accruals.</span></div><div class="demo-check error"><strong>Error · Missing cost center</strong><span>The request must include an active cost center before approval.</span></div><div class="demo-check passed"><strong>Pass · Other controls</strong><span>Entity active · Period open · Debits equal credits · Evidence linked · No duplicate found.</span></div>`;
+  if (step === 4) return `<div class="demo-source">Human approval required · Correction Agent never posts journals</div>${fields([["Account code", "64290 → 64210 · Telecommunications"], ["Cost center", "Not assigned → CC-410 · Sales Operations"], ["Proposed debit", "$24,850 · Telecommunications"], ["Proposed credit", "$24,850 · Accrued expenses"]])}<div class="demo-check ${state.walkthroughCorrected ? "passed" : ""}"><strong>${state.walkthroughCorrected ? "Recommendation accepted by Alex Morgan" : "Why this correction?"}</strong><span>The account and cost center align with the approved North America telecom policy. A person must accept these proposed values.</span></div>`;
+  if (step === 5) return `${fields([["Posting package", "JE-2025-0847 · 2 balanced lines · $24,850"], ["ERP target", "Oracle Fusion · simulation"], ["Corrections", state.walkthroughCorrected ? "Accepted by Alex Morgan" : "Awaiting human acceptance in step 4"], ["Posting status", state.walkthroughPosted ? "POSTED · NS-883421" : "NOT POSTED · Manager approval required"]])}${state.walkthroughPosted ? `<div class="demo-check passed"><strong>Timestamped audit record</strong><span>${escapeHtml(state.walkthroughPosted)} · Accounting Manager approved the journal. ERP Posting Agent generated the package and simulated posting NS-883421.</span></div>` : `<div class="demo-check"><strong>Human approval gate</strong><span>${state.walkthroughCorrected ? "Select Approve & post journal to simulate the manager decision and ERP posting." : "Accept the recommendation in step 4 before approving and posting. No journal will be posted automatically."}</span></div>`}`;
+  return `<div class="demo-source">Illustrative business outcomes · not measured production results</div><div class="impact-comparison">${[["PROCESSING TIME · 80% FASTER", "20h", "4h", 20], ["MANUAL EFFORT · 60% REDUCTION", "100%", "40%", 40]].map(([label, before, after, width]) => `<div class="impact-compare-group"><strong>${label}</strong><div class="impact-bars"><div class="impact-bar before" style="width:100%">Before · ${before}</div><div class="impact-bar after" style="width:${width}%">With AI · ${after}</div></div></div>`).join("")}</div>${fields([["Quality", "Fewer journal errors"], ["Close cycle", "Faster month-end close"], ["Governance", "Human-approved corrections and posting"], ["Audit readiness", "Evidence, reasoning, and approvals in one timeline"]])}${demonstrated ? `<div class="demo-check passed"><strong>Walkthrough complete</strong><span>Explore any tile again or finish to return to the workspace.</span></div>` : ""}`;
+}
+
+function demoResultMessage(step) {
+  return [
+    "Close delays, manual effort, and control risks identified.",
+    "Spreadsheet read. A $24,850 proposal was extracted with 94% confidence.",
+    "Validation report generated: two errors and five passing control checks.",
+    "Alex Morgan accepted the corrected account and cost center. No journal was posted.",
+    "Manager approved. ERP Posting Agent simulated posting NS-883421 and captured the audit record.",
+    "Business impact reviewed: 80% faster processing and 60% less manual effort."
+  ][step - 1];
+}
+
+function selectDemoStep(step) {
+  state.walkthroughTile = step;
+  renderWalkthrough();
+  document.querySelector(`[data-tile="${step}"]`).focus();
 }
 
 function runDemoStep() {
-  const step = state.walkthroughTile || 1;
-  const journal = findJournal("JE-2025-0847");
-  if (step === 1) { toast("Manual review, close delays, and control risk — addressed by four focused agents."); }
-  if (step === 2) { journal.status = "Needs review"; journal.validation = "Error"; journal.stage = "Intake complete · Validation complete"; addAudit(journal, "Telecom accrual extracted · 94% confidence", "Journal Intake Agent"); document.getElementById("overlay-root").innerHTML = ""; setPage("processing"); openJournal(journal.id); return; }
-  if (step === 3) { journal.validation = "Error"; journal.issues = ["Missing cost center", "Unsupported account code"]; journal.status = "Needs review"; addAudit(journal, "Validation exceptions detected", "Validation Agent"); document.getElementById("overlay-root").innerHTML = ""; openJournal(journal.id); return; }
-  if (step === 4) { document.getElementById("overlay-root").innerHTML = ""; openJournal(journal.id); doAction("accept-recommendation", journal.id); return; }
-  if (step === 5) {
-    journal.account = "64210 · Telecommunications"; journal.costCenter = "CC-410 · Sales Operations"; journal.issues = []; journal.validation = "Passed"; journal.status = "Posted"; journal.stage = "Posted to ERP";
-    addAudit(journal, "Human accepted AI correction recommendation", "Alex Morgan"); addAudit(journal, "Approved by Accounting Manager", "Accounting Manager"); addAudit(journal, "Posted · ERP document NS-883421", "ERP Posting Agent");
-    document.getElementById("overlay-root").innerHTML = ""; renderPage(); openJournal(journal.id); toast("Demo journal approved and POSTED to the ERP simulation."); return;
+  const step = state.walkthroughTile;
+  if (state.walkthroughResults.includes(step)) return;
+  if (step === 5 && !state.walkthroughCorrected) {
+    toast("Accept the correction in step 4 before approving and posting.");
+    selectDemoStep(4);
+    return;
   }
-  if (step === 6) { document.getElementById("overlay-root").innerHTML = ""; setPage("overview"); toast("Walkthrough complete. Explore the dashboard and audit trail."); return; }
+  if (step === 4) state.walkthroughCorrected = true;
+  if (step === 5) state.walkthroughPosted = now().toLocaleString();
+  state.walkthroughResults.push(step);
+  renderWalkthrough();
+  document.querySelector('.walk-bottom button:last-child').focus();
 }
 
 function exportJournals() {
@@ -305,7 +356,7 @@ document.addEventListener("click", (event) => {
   const filterButton = event.target.closest("[data-filter]");
   if (filterButton) { state.filter = filterButton.dataset.filter; renderPage(); return; }
   const tile = event.target.closest("[data-tile]");
-  if (tile) { state.walkthroughTile = Number(tile.dataset.tile); renderWalkthrough(); return; }
+  if (tile) { selectDemoStep(Number(tile.dataset.tile)); return; }
   const approveButton = event.target.closest("[data-approve]");
   if (approveButton) { event.stopPropagation(); doAction("approve", approveButton.dataset.approve); return; }
   const openButton = event.target.closest("[data-open]");
@@ -329,7 +380,6 @@ document.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); document.getElementById("global-search").focus(); }
   if (event.key === "Escape") { document.getElementById("overlay-root").innerHTML = ""; state.activeJournal = null; }
   if (event.key === "Enter" && event.target.matches(".global-search input")) { setPage("processing"); document.getElementById("table-search")?.focus(); }
-  if (event.key === "Enter" && document.getElementById("walkthrough-overlay")) runDemoStep();
 });
 
 document.getElementById("theme-toggle").addEventListener("click", () => {
